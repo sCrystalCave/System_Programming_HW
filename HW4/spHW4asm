@@ -1,0 +1,308 @@
+INCLUDE C:\Irvine32\Irvine32.inc	;사용할 라이브러리 추가
+
+.386	; this as a 32-bit program
+.model flat, stdcall	; program’s memory model (flat), calling convention (named stdcall) for procedures
+.stack 4096		; 4096 bytes of storage for the runtime stack
+
+.data
+
+MyInfo BYTE "20101432 조윤지", 0	; 학번과 이름을 저장한 null-terminated string
+PrintInt BYTE "32개 unsigned 5byte integer 난수 생성", 0
+hexa BYTE "0x",0
+PrintSum BYTE "32개 unsigned 5byte integer 합: ", 0
+PrintAvg BYTE "평균: ", 0
+PrintAbsDeviations BYTE "32개 편차: ", 0
+PrintsumDeviation2 BYTE "32개 편차 제곱 합", 0
+PrintVariance BYTE "분산 : ", 0
+
+val BYTE 160 DUP(?) ; 32개의 5byte 정수, 즉 160 byte 난수를 저장하는 배열
+                    ; 나중에는 편차 절대값을 저장하는 공간으로 사용됨.
+sum BYTE 6 DUP(0) ; sum
+avg BYTE 5 DUP(0) ; sum을 32로 나눈 몫이면서 평균 값
+variance BYTE 12 DUP(0) ; 분산을 구하기 위한 과정에서 편차제곱의 합을 저장한 다음 
+                        ; 그것을 32로 나눠 최종적으로 분산을 저장한다. 
+                        ; 마지막 shr을 원활하게 하기 위해 4바이트의 정수배로 설정했다.
+
+.code
+
+;---------------------------------- 
+
+Display PROC
+    mov edx, OFFSET hexa
+    call WriteString
+
+    add esi, ecx
+    mov ebx, TYPE BYTE
+
+L1: sub esi, TYPE BYTE
+    mov al, [esi]
+    call WriteHexB
+    loop L1
+    ret
+Display ENDP
+
+DisplayArray PROC
+mov esi, OFFSET val
+mov ecx, 32
+L5: push ecx
+    mov ecx, 5
+    call Display
+    
+    mov al, 32   ; ASCII 코드 값으로 공백 문자를 설정
+    call WriteChar
+
+    add esi, 5
+    pop ecx
+loop L5
+ret
+DisplayArray ENDP
+
+;-------------------------------
+Extended_Add PROC
+    clc
+L1: mov al, [edi]     ; [edi] : val 값
+    adc [ebx], al     ; [ebx] : sum 값
+    inc edi
+    inc ebx
+    loop L1
+    adc byte ptr [ebx], 0
+    ret
+Extended_Add ENDP
+
+DivideForAvg PROC
+    mov eax, DWORD PTR [esi]  ; 하위 32비트
+    mov edx, DWORD PTR [esi+4] ; 상위 32비트
+    shrd eax, edx, 5
+    shr edx, 5
+    mov WORD PTR [edi+4], dx
+    mov DWORD PTR [edi], eax
+    ret
+DivideForAvg ENDP
+
+;--------------------------------------------------------------------
+CalculateAverage PROC
+;32개 합
+mov ecx, 32
+mov edi, OFFSET val
+L2:
+    push ecx
+    mov ebx, OFFSET sum
+    mov ecx, 5
+    call Extended_Add
+    pop ecx
+loop L2
+
+call Crlf
+call Crlf
+mov edx, OFFSET PrintSum
+call WriteString
+mov esi, OFFSET sum
+mov ecx, LENGTHOF sum
+call Display
+
+mov esi, offset sum
+mov edi, offset avg
+call DivideForAvg ;평균값 구하는 함수
+
+call Crlf
+mov edx, OFFSET PrintAvg
+call WriteString
+mov esi, offset avg
+mov ecx, LENGTHOF avg
+call Display
+ret
+CalculateAverage ENDP
+;------------------------------------------ 4차 과제
+Extended_Sub PROC
+    clc
+    mov ecx, 5
+
+L1: mov al, [ebx]     
+    sbb [edi], al     ; [ebx] : avg 값 ; [edi] : val 값
+    inc edi
+    inc ebx
+    loop L1
+    
+    ret
+Extended_Sub ENDP
+
+Copy PROC
+    
+L1: mov al, BYTE PTR[esi]
+    mov [edi], al
+    inc edi
+    inc esi
+    loop L1
+    
+    ret
+Copy ENDP
+
+CmpAndSub PROC
+    mov al, BYTE PTR [edi+4] 
+    cmp al, BYTE PTR [ebx+4] 
+    jb L2
+    je L1
+    call Extended_Sub
+    jmp L4
+
+L1: mov eax, DWORD PTR [edi]
+    cmp eax, DWORD PTR [ebx] 
+    jb L2
+    call Extended_Sub
+    jmp L4
+
+L2: mov edx, edi
+    mov edi, ebx ; edi : avg, ebx : val 로 바뀜
+    mov ebx, edx
+
+    mov esi, edi
+    add edi, 5
+    mov ecx, 5
+    call Copy
+    sub edi, 5
+    call Extended_Sub
+    sub edi, 5
+    sub ebx, 5
+
+    mov esi, edi
+    mov edi, ebx
+    mov ecx, 5
+    call Copy
+
+    mov edi, ebx ; 원래의 것을 포인트함.
+    add edi, 5
+
+L4: ret
+CmpAndSub ENDP
+
+MulAndSum PROC 
+
+;4바이트 * 4바이트
+mov eax, DWORD PTR [esi]
+mul eax
+add DWORD PTR [edi], eax
+adc DWORD PTR [edi+4], edx
+adc DWORD PTR [edi+8], 0
+
+;4바이트 * 1바이트 * 2
+mov eax, DWORD PTR [esi]
+movzx ebx, BYTE PTR [esi+4]
+mul ebx
+add DWORD PTR [edi+4], eax
+adc DWORD PTR [edi+8], edx
+; 두 값은 같지만 먼저 2를 곱하면  
+; 8바이트를 넘어가버리기 때문에
+; 두 번에 나눠서 더해줘야한다.
+add DWORD PTR [edi+4], eax 
+adc DWORD PTR [edi+8], edx
+
+;2-2 1바이트 * 1바이트
+movzx eax, BYTE PTR [esi+4]
+mul eax
+add DWORD PTR [edi+8],eax
+
+ret
+MulAndSum ENDP
+
+DivideForVariance PROC
+
+L1: mov eax, [edi + TYPE DWORD]
+    shrd [edi], eax, 5
+    add edi, TYPE DWORD
+    loop L1
+
+shr DWORD PTR [edi], 5
+
+ret
+DivideForVariance ENDP
+
+;-----------------------------------------
+CalculateVariance PROC 
+; 32개 숫자가 저장된 val과 위에서 구한 평균 avg를 이용하여 분산을 구하는 함수
+
+    mov ecx, 32
+    mov edi, offset val
+L1: push ecx
+    mov ebx, offset avg
+    call CmpAndSub ;편차의 절대값을 구하는 함수
+    pop ecx
+    loop L1
+; 임시변수가 variance 자리를 차지했으므로 원상복구시킴
+    mov ebx, offset avg
+    mov DWORD PTR [ebx+5],0
+    mov BYTE PTR [ebx+9],0
+
+;계산 결과 출력
+    call Crlf
+    call Crlf
+    mov edx, OFFSET PrintAbsDeviations
+    call WriteString
+    call DisplayArray
+
+;32개 편차 제곱의 합을 구함
+    mov ecx, 32 
+    mov esi, offset val
+    mov edi, offset variance
+L2: call MulAndSum 
+    add esi,5
+    loop L2
+
+;32개 편차 제곱의 합 출력
+    call Crlf
+    call Crlf
+    mov edx, OFFSET PrintsumDeviation2 
+    call WriteString
+    mov esi, OFFSET variance
+    mov ecx, (LENGTHOF variance) - 1
+    call Display
+
+;32로 나눠서 분산 구함
+    mov edi, offset variance
+    mov ecx, 2 ; 4바이트씩 잘랐을 때 3개 나옴. 인접한 둘 씩 묶으면 2개
+    call DivideForVariance
+
+;분산 출력
+    call Crlf
+    mov edx, OFFSET PrintVariance
+    call WriteString
+    mov esi, OFFSET variance
+    mov ecx, (LENGTHOF variance) - 2
+    call Display
+    
+    ret
+CalculateVariance ENDP
+
+;--------------------------------------------------------------------
+;--------------------------------------------------------------------
+main PROC	; 메인 프로시저 시작
+
+call Clrscr	; 라이브러리에서 지원하는 프로시저. 콘솔창을 clear
+
+mov edx, OFFSET MyInfo
+call WriteString	; "20101432 조윤지"를 출력
+
+; val 초기화 부분
+call Randomize
+mov ecx, 40
+mov ebx, OFFSET val ; val 배열의 시작 주소를 ebx 레지스터에 복사합니다.
+L1 : call Random32
+     mov DWORD PTR [ebx], eax ; 랜덤 값 저장
+     add ebx, 4
+	 loop L1
+
+;32개 출력
+call Crlf
+mov edx, OFFSET PrintInt
+call WriteString
+call Crlf
+call DisplayArray
+
+;3차과제 평균
+call CalculateAverage
+
+;4차과제 분산
+call CalculateVariance
+
+exit	; 라이브러리에서 지원하는 프로시저. invoke ExitProcess, 0 대신 사용
+main ENDP	; 메인 프로시저 종료
+END main	; 프로그램 종료
